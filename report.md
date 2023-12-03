@@ -37,9 +37,8 @@ Each node in the RangeQueue contains
 - `base`: The value of the the least key that could be inserted into it. Must be divisible by `BUF_SIZE`.
 - `next`: A pointer to the next node in the queue.
 - `parent`, `left`, `right`: Pointers to the parent, left child, and right child of the node respectively. Standard BST terminology.
-- `buf`: A bitvector of size `BUF_SIZE + 1` that stores 
-  - Whether the key at an index has been inserted in the tail `BUF_SIZE` bits,
-  - The MSB is a flag indicating whether a node is being inserted into the RangeQueue. The MSB is similar to the `ins` flag in TSLQueue.
+- `buf`: A bitvector of size `BUF_SIZE` that indicates whether the key at an index has been inserted.
+- `ins`: A flag indicating whether the node is currently undergoing insertion. Identical to TSLQueue.
 
 The RangeQueue has a `head` pointer that points to the first node in the queue. The `head` pointer is a dummy node that has a key of -1 and a `next` pointer to the first node in the queue. The `head` pointer is used to simplify the implementation of the `deleteMin()` operation and address the ABA problem.
 
@@ -53,7 +52,8 @@ Both the dummy nodes are used in TSLQueue, for ease of proof of correctness.
 
 - A thread descends the BST to find the node that contains the key to be inserted. 
   - If such a node exists, it atomically sets the corresponding bit in the `buf` bitvector. If the bit is already set, returns duplication error.
-  - Otherwise, it allocates a new node with the appropriate bit set, and inserts it into the RangeQueue. This is similar to the TSLQueue insert, with an identical `Seek` struct.
+    - If a node is logically deleted (i.e. `buf` is all zeroes), it's existence will not be reported, i.e. `InsertSearch` returns `existingNode = null`.
+  - Otherwise, it allocates a new node with the appropriate bit set, and inserts it into the RangeQueue. This is identical to the TSLQueue insert, with an similar `Seek` struct.
     - Set `next` to next node in the linked list.
     - Atomically insert into the linked list by setting `next` pointer of the previous node to the new node.
     - Set `parent` pointer of the new node to the parent node.
@@ -61,11 +61,11 @@ Both the dummy nodes are used in TSLQueue, for ease of proof of correctness.
 
 ## Deletion
 
-- A thread descends the BST to find the node that contains the key to be deleted.
-  - If the node exists, but it's `buf` bitvector is all zeroes, it has been logically deleted. The thread randomly decides to physically delete the node or not.
-  - If the key exists, it atomically clears the corresponding bit in the `buf` bitvector.
-  - If the key is absent or the bit is already cleared, it returns deletion error.
-- If `buf` is all zeroes, the node is logically deleted by setting the tag on `next`, as in TSLQueue.
+- Deletion uses the `head` pointer to access the minimal node, and resets the highest set bit in the `buf` bitvector. 
+  - This is a single atomic operation - upon failure, the thread simply retries delete.
+  - If after deletion, the `buf` bitvector is all zeroes, the node is said to be logically deleted, unlike in TSLQueue where there is a specific tag on the `next` pointer to indicate the same. With some nonzero probability, the thread physically deletes the node. Physical deletion is identical to TSLQueue.
+    - Atomically delete from the linked list by setting `next` pointer of `head` to the next node.
+    - Atomically delete from the BST by setting `left` pointer of the parent node to the next node.
 
 # Pseudocode
 
