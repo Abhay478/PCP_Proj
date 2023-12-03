@@ -1,26 +1,63 @@
-macro IS_EMPTY(node) {
-  node.buf & ((1 << BUF_SIZE) - 1) == 0
-}
+macro IS_EMPTY(buf):
+  buf & ((1 << BUF_SIZE) - 1) == 0
 
-macro TRAVERSE() {
-  if key <= pNode.base && !IS_EMPTY(pNode):
-    GOLEFT()
+macro TRAVERSE():
+  if key <= pNode.base && !IS_EMPTY(pNode.buf):
+  GOLEFT()
   else:
     GORIGHT()
-}
 
-macro IN_RANGE(node, key) {
-  return node.base <= key < node.base + BUF_SIZE
-}
+macro IN_RANGE(node, key):
+  node.base <= key < node.base + BUF_SIZE
+
+
+fn insert(key):
+  loop:
+    seek = insert_search(key)
+
+    if seek.existingNode:
+      node = seek.existingNode
+      buf = node.buf
+      if IS_EMPTY(buf):
+        // logically deleted
+        continue
+      mask = 1 << (key % BUF_SIZE)
+      if buf & mask:
+        // duplicate
+        return duplicate
+      newbuf = buf | mask
+      if CAS(node.buf, buf, newbuf):
+        return success
+      else:
+        continue
+
+    newNode = new Node {
+      key: key,
+      right: MARKLEAF(newNode),
+      left: MARKLEAF(seek.pred),
+      next: seek.succ,
+      parent: seek.pNode,
+      ptrp: seek.ptrp,
+      inserting: 1
+    }
+
+    if !CAS(seek.pred, seek.succ, newNode):
+      continue
+
+    if seek.ptrp == LEFT:
+      CAS(seek.pNode.left, leaf, newNode)
+    else:
+      CAS(seek.pNode.left, leaf, newNode)
+
 
 fn insert_search(key):
   pNode = root
   cNode = root.child
   loop:
-    if IS_EMPTY(pNode):
+    if IS_EMPTY(pNode.buf):
       GORIGHT(pNode); mNode = pNode
       loop:
-      | if IS_EMPTY(pNode):
+      | if IS_EMPTY(pNode.buf):
       |   if !LEAF(cNode):
       |     pNode = cNode
       |     continue
@@ -29,7 +66,7 @@ fn insert_search(key):
       |     GORIGHT(pNode)
       |     break
       | else:
-      |   if gen_rand() > prob_ins_clean:
+      |   if gen_rand() <= prob_ins_clean:
       |     CAS(gNode.left, mNode, pNode)
       |   TRAVERSE()
       |   break
@@ -42,15 +79,15 @@ fn insert_search(key):
       continue
 
     next = cNode.next
-    if IS_EMPTY(cNode):
+    if IS_EMPTY(cNode.buf):
       pNode = next
       GORIGHT(pNode)
-    else if next && INS(next):
+    else if next && next.inserting:
       help_insert(next)
       pNode = next
       TRAVERSE()
     else if next && IN_RANGE(next, key):
-      // *************************
+// *************************
       seek.existingNode = next
       return seek
     else if ptrp == LEFT && pNode.left != cNode:
@@ -63,3 +100,51 @@ fn insert_search(key):
       seek.succ = next
       seek.ptrp = ptrp
       return seek
+
+
+thread_local prev_head = NULL, dummy = NULL
+
+fn deleteMin():
+  hNode = head.next
+  if prev_head == hNode:
+    dummy = prevDummy
+  else:
+    GarbageCollector(timestamp)
+    dummy = hNode
+    prev_head = hNode
+
+  loop:
+    next_leaf = dummy.next
+    if next_leaf == NULL:
+      return NULL
+
+    if IS_EMPTY(next_leaf):
+      dummy = next_leaf
+      next_leaf = dummy.next
+      continue
+
+    buf = next_leaf.buf
+    lowest_bit_mask = buf & -buf  // bit hack
+    prev_buf = fetch_and(next_leaf.buf, ~lowest_mask) // unset mask, get old value
+    if !(prev_buf & lowest_bit_mask):
+      // bit wasn't set, retry
+      continue
+
+    value = key - (key % BUF_SIZE) + log2(lowest_bit_mask)
+
+    if prev_buf != lowest_bit_mask:
+      // next_leaf not empty
+      return value
+
+    if gen_rand() > prob_physical_delete:
+      // don't delete
+      return value
+
+    if CAS(head.next, hNode, ADDRESS(next_leaf)):
+      clean_tree(next_leaf)
+
+    return value
+
+
+fn clean_tree(dummy):
+  // identical to TSLQueue clean_tree, just switch DEL to IS_EMPTY
