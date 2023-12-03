@@ -1,0 +1,65 @@
+macro IS_EMPTY(node) {
+  node.buf & ((1 << BUF_SIZE) - 1) == 0
+}
+
+macro TRAVERSE() {
+  if key <= pNode.base && !IS_EMPTY(pNode):
+    GOLEFT()
+  else:
+    GORIGHT()
+}
+
+macro IN_RANGE(node, key) {
+  return node.base <= key < node.base + BUF_SIZE
+}
+
+fn insert_search(key):
+  pNode = root
+  cNode = root.child
+  loop:
+    if IS_EMPTY(pNode):
+      GORIGHT(pNode); mNode = pNode
+      loop:
+      | if IS_EMPTY(pNode):
+      |   if !LEAF(cNode):
+      |     pNode = cNode
+      |     continue
+      |   else:
+      |     pNode = cNode.next
+      |     GORIGHT(pNode)
+      |     break
+      | else:
+      |   if gen_rand() > prob_ins_clean:
+      |     CAS(gNode.left, mNode, pNode)
+      |   TRAVERSE()
+      |   break
+      continue
+
+    if !LEAF(cNode):
+      gNode = pNode
+      pNode = cNode
+      TRAVERSE()  // either left or right, based on key
+      continue
+
+    next = cNode.next
+    if IS_EMPTY(cNode):
+      pNode = next
+      GORIGHT(pNode)
+    else if next && INS(next):
+      help_insert(next)
+      pNode = next
+      TRAVERSE()
+    else if next && IN_RANGE(next, key):
+      // *************************
+      seek.existingNode = next
+      return seek
+    else if ptrp == LEFT && pNode.left != cNode:
+      TRAVERSE()
+    else if ptrp == RIGHT && pNode.right != cNode:
+      TRAVERSE()
+    else:
+      seek.pred = cNode
+      seek.pNode = pNode
+      seek.succ = next
+      seek.ptrp = ptrp
+      return seek
