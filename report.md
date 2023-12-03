@@ -10,12 +10,16 @@ abstract: |
   This document is a report for the Final Project of the course CS5300: Parallel and Concurrent Programming, regarding a novel implementation of a lock-free data structure. 
 ---
 
-# Base
+# Introduction and Related Work
 
-This is a generalisation of the TSLQueue data structure proposed by Rukundo and Tsigas. Where the nodes in the TSLQueue data structure contain only a single key, RangeQueue has a range of keys within a node. Like all priority queues, the TNTQueue supports the following operations:
+A priority queue supports two operations:
 
-- `insert(key)`: Insert a key `k` into the queue.
-- `deleteMin()`: Delete the key with the lowest key from the queue.
+- `insert(key)`: Insert a key into the queue.
+- `deleteMin()`: Delete and return the key with the lowest key from the queue.
+
+Our implementation is based on the TSLQueue data structure proposed by Rukundo and Tsigas. In a TSLQueue, keys are stored in a binary search tree, and each node contains a `next` pointer to the node with the next lowest key. This allows for `insert` in log time, and constant time `deleteMin`, while still being parallelizable.
+
+While the TSLQueue only stores a single key in each node, we generalize it to hold a range of keys per node, using a bitvector
 
 # Optimisations
 
@@ -23,7 +27,7 @@ The RangeQueue is an improvement over the TSLQueue in the following ways:
 
 - Cache locality: Since each node represents a range of keys, the number of nodes in the queue is reduced. This reduces the number of cache misses.
 - Fewer CAS operations: 
-  - The TSLQueue requires 2 CAS operations per insertion, because each insertion modifes a linked list and a tree. RangeQueue requires only fewer CAS operations on average per insertion. This will be elaborated upon in the Algorithm section
+  - The TSLQueue requires 2 CAS operations per insertion, because each insertion modifes a linked list and a tree. RangeQueue requires either 1 CAS operation, or 1 CAS and 1 FETCH_OR per insertion. This will be elaborated upon in the Algorithm section.
   - The TSLQueue requires 3 CAS operations per deletion, one to logically delete the node by marking a bit, and two to modify pointers. RangeQueue again requires fewer CAS's because not every deletion requires pointer rearrangement.
 - Lesser memory footprint: We use bitvectors instead of storing the actual value.
 
@@ -67,15 +71,6 @@ Both the dummy nodes are used in TSLQueue, for ease of proof of correctness.
     - Atomically delete from the linked list by setting `next` pointer of `head` to the next node.
     - Atomically delete from the BST by setting `left` pointer of the parent node to the next node.
 
-# Pseudocode
+# References
 
-# Correctness
-
-We will assume TSLQueue is correct, and show that the correctness of RangeQueue follows by showing that the following conditions hold:
-
-1. An active node key is the maximum key of its left-descendant(s) and the minimum key of its right-descendant(s). Also implying, that an active leaf key is the maximum key of all its preceding active leaves and the minimum of all its succeeding active leaves in the list.
-2. An active node can only be logically deleted once and after all its left-descendants have been deleted. Also implying, that an active leaf can only be logically deleted once and after all its preceding leaves have been logically deleted. Further implying that DeleteMin() cannot linearize on a logically deleted node.
-3. An inserted node is always pointed to by an active node next- pointer. Also implying, that Insert() cannot linearize on a logically deleted node.
-
-
-
+Rukundo, A., Tsigas, P. (2021). TSLQueue: An Efficient Lock-Free Design for Priority Queues. In: Sousa, L., Roma, N., Tomás, P. (eds) Euro-Par 2021: Parallel Processing. Euro-Par 2021. Lecture Notes in Computer Science(), vol 12820. Springer, Cham. https://doi.org/10.1007/978-3-030-85665-6_24
