@@ -10,6 +10,7 @@ using namespace std;
 #define STUB_GEN 0xffffffe0
 
 #define MARKLEAF(node) (Node *)(((long long)(node)) | 1)
+#define ADDRESS(node) (Node *)(((long long)(node)) & ~3) // Last two bits.
 #define LEAF(node) ((long long)(node) & 1)
 #define IS_EMPTY(buf) buf & ((1 << BUF_SIZE) - 1) == 0
 #define GOLEFT(cnode, pnode, ptrp) cNode = pNode->left; ptrp = ChildType::LEFT;
@@ -74,7 +75,7 @@ struct Node {
     // int deleteMin();
 } * leaf = (Node *)1;
 
-thread_local Node * pred = NULL, * dummy = NULL;
+thread_local Node * prev_head = NULL, * dummy = NULL;
 
 enum class ChildType {
     LEFT,
@@ -211,5 +212,47 @@ Seek RangeQueue::insert_search(int k) {
         } else {
             GORIGHT(cNode, pNode, ptrp);
         }
+    }
+}
+
+// Barebones, copied from pseudocode without much brain usage. 
+// What even is prev_dummy?
+int RangeQueue::delete_min() {
+    auto hnode = sentinel->head;
+    if(prev_head == hnode) {
+        dummy = prev_dummy;
+    } else {
+        prev_head = hnode;
+        dummy = hnode;
+    }
+
+    while(1) {
+        auto next_leaf = dummy->next.load();
+        if (!next_leaf) {
+            return -1;
+        } 
+        if(IS_EMPTY(next_leaf->buf)) {
+            dummy = next_leaf;
+            continue;
+        }
+
+        auto buf = next_leaf->buf.load();
+        auto lbm = buf & -buf; // What?
+        auto prev = next_leaf->buf.fetch_and(~lbm);
+        if(!prev) continue;
+
+        auto min = __builtin_ctz(lbm) + next_leaf->base; // Count trailing zeros. IBM builtin. Copilot thing.
+
+        if(prev != lbm /*or probability stuff*/) {
+            return min;
+        }
+
+        if(sentinel->head->next.compare_exchange_strong(hnode, ADDRESS(next_leaf))) {
+            clean_tree(next_leaf);
+        }
+
+        return min;
+
+
     }
 }
