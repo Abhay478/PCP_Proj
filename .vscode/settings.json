@@ -1,0 +1,11 @@
+{
+    "files.associations": {
+        "*.tex": "latex",
+        "*.cpp": "cpp",
+        "*.rs": "rust",
+        "*.c": "c",
+        "*.sql": "sql",
+        "*.cypher": "cypher",
+        "unordered_map": "cpp"
+    }
+}

@@ -47,7 +47,7 @@ fn insert(key):
     if seek.ptrp == LEFT:
       CAS(seek.pNode.left, leaf, newNode)
     else:
-      CAS(seek.pNode.left, leaf, newNode)
+      CAS(seek.pNode.right, leaf, newNode)
 
 
 fn insert_search(key):
