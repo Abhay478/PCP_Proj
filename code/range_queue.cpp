@@ -12,9 +12,11 @@ using namespace std;
 #define MARKLEAF(node) (Node *)(((long long)(node)) | 1)
 #define ADDRESS(node) (Node *)(((long long)(node)) & ~3) // Last two bits.
 #define LEAF(node) ((long long)(node) & 1)
-#define IS_EMPTY(buf) buf & ((1 << BUF_SIZE) - 1) == 0
+// #define IS_EMPTY(buf) buf & ((1 << BUF_SIZE) - 1) == 0
+#define IS_EMPTY(buf) (buf & ~0 == 0)
 #define GOLEFT(cnode, pnode, ptrp) cNode = pNode->left; ptrp = ChildType::LEFT;
 #define GORIGHT(cnode, pnode, ptrp) cNode = pNode->right; ptrp = ChildType::RIGHT;
+
 #define \
 TRAVERSE(key, cNode, pNode, ptrp) \
     if (key <= pNode->base && !IS_EMPTY(pNode->buf)) \
@@ -28,7 +30,12 @@ TRAVERSE(key, cNode, pNode, ptrp) \
 enum class InsertStatus {
     Success,
     Duplicate,
-    Deleted
+    Failure
+};
+
+enum class DeleteStatus {
+    Success,
+    Failure
 };
 
 struct Node {
@@ -61,7 +68,7 @@ struct Node {
         ptrp(ptrp) {}
 
     void dbg() {
-        int u = 1 << 31;
+        int u = 1 << BUF_SIZE - 1;
 
         for(int c = 0; u; c++) {
             if (buf & u) {
@@ -71,8 +78,34 @@ struct Node {
         }
     }
 
-    InsertStatus insert(int k);
-    // int deleteMin();
+    InsertStatus insert(int k) {
+        if(IS_EMPTY(buf)) {
+            return InsertStatus::Failure;
+        }
+        int mask = 1 << (k % BUF_SIZE);
+        if(buf & mask) {
+            return InsertStatus::Duplicate;
+        }
+        int newbuf = buf | mask;
+        if(buf.compare_exchange_strong(newbuf, buf)) {
+            return InsertStatus::Success;
+        }
+        return InsertStatus::Failure;
+    }
+
+    int deleteMin() {
+        int lbm = buf & -buf; // What?
+        int prev = buf.fetch_and(~lbm);
+        if(!prev) return -1;
+
+        // value = key - (key % BUF_SIZE) + log2(lowest_bit_mask)
+        auto min = __builtin_ctz(lbm) + base; // Count trailing zeros. IBM builtin. Copilot thing.
+        
+        if(prev != lbm) {
+            return min;
+        }
+
+    }
 } * leaf = (Node *)1;
 
 thread_local Node * prev_head = NULL, * dummy = NULL;
@@ -118,7 +151,7 @@ InsertStatus RangeQueue::insert(int k) {
         Seek s = insert_search(k); 
         if (s.exists) {
             auto q = s.exists->insert(k); // Put all the cas-ing in this.
-            if (q == InsertStatus::Deleted) {
+            if (q == InsertStatus::Failure) {
                 continue;
             } 
             return q;
@@ -218,7 +251,7 @@ Seek RangeQueue::insert_search(int k) {
 // Barebones, copied from pseudocode without much brain usage. 
 // What even is prev_dummy?
 int RangeQueue::delete_min() {
-    auto hnode = sentinel->head;
+    Node * hnode = sentinel->head;
     if(prev_head == hnode) {
         dummy = prev_dummy;
     } else {
@@ -227,32 +260,117 @@ int RangeQueue::delete_min() {
     }
 
     while(1) {
-        auto next_leaf = dummy->next.load();
+        Node * next_leaf = dummy->next.load();
         if (!next_leaf) {
             return -1;
         } 
         if(IS_EMPTY(next_leaf->buf)) {
             dummy = next_leaf;
+            dummy->next = next_leaf;
             continue;
         }
 
-        auto buf = next_leaf->buf.load();
-        auto lbm = buf & -buf; // What?
-        auto prev = next_leaf->buf.fetch_and(~lbm);
+        /* int buf = next_leaf->buf.load();
+        int lbm = buf & -buf; // What?
+        int prev = next_leaf->buf.fetch_and(~lbm);
         if(!prev) continue;
 
         auto min = __builtin_ctz(lbm) + next_leaf->base; // Count trailing zeros. IBM builtin. Copilot thing.
 
-        if(prev != lbm /*or probability stuff*/) {
+        if(prev != lbm or probability stuff) {
+            return min;
+        } */
+
+        int min;
+
+        if((min = next_leaf->deleteMin()) != -1) {
+            if(/* Probability stuff && */sentinel->head->next.compare_exchange_strong(hnode, ADDRESS(next_leaf))) {
+                clean_tree(next_leaf);
+            }
+
             return min;
         }
 
-        if(sentinel->head->next.compare_exchange_strong(hnode, ADDRESS(next_leaf))) {
-            clean_tree(next_leaf);
-        }
-
-        return min;
 
 
     }
+}
+
+int RangeQueue::clean_tree(Node * dummy) {
+    Node * cNode = sentinel->root;
+    Node * pNode = NULL;
+    Node * gNode = NULL; // Sus
+    ChildType ptrp;
+
+    while(1) {
+        if(pNode && IS_EMPTY(pNode->buf)) {
+            GORIGHT(cNode, pNode, ptrp);
+            Node * mnode = pNode;
+            while(1) {
+                if(pNode && IS_EMPTY(pNode->buf)) {
+                    if(!LEAF(cNode)) {
+                        pNode = cNode;
+                        GORIGHT(cNode, pNode, ptrp);
+                        continue;
+                    }
+                    else {
+                        Node * next = cNode->next;
+                        if(next->inserting) {
+                            // Help insert
+                        }
+                        else if(pNode->right == cNode) {
+                            gNode->buf = 0; 
+                            goto FINISH;
+                        }
+                        GORIGHT(cNode, pNode, ptrp);
+                        continue;
+                    }
+                }
+                else {
+                    if(gNode && !IS_EMPTY(gNode->buf)) {
+                        if(gNode->left.compare_exchange_strong(mnode, pNode)) {
+                            GOLEFT(cNode, pNode, ptrp);
+                            break;
+                        }
+
+                        pNode = gNode;
+                        GOLEFT(cNode, pNode, ptrp);
+                        break;
+                    }
+
+                    goto FINISH;
+                }
+            }
+            
+        }
+
+        else {
+            if(!LEAF(cNode)) {
+                if(pNode == dummy) { // Sus.
+                    pNode->buf = 0; 
+                    goto FINISH;
+                }
+                gNode = pNode;
+                pNode = cNode;
+                GOLEFT(cNode, pNode, ptrp);
+                continue;
+            }
+            else {
+                Node * next = cNode->next;
+                if(IS_EMPTY(cNode->buf)) {
+                    if(next->inserting) {
+                        // Help insert
+                    }
+                    else if(pNode->right == cNode) {
+                        gNode->buf = 0; 
+                        goto FINISH;
+                    }
+                    GOLEFT(cNode, pNode, ptrp);
+                    continue;
+                }
+            }
+        }
+        FINISH: break;
+    }
+
 }
